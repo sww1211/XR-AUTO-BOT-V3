@@ -29,99 +29,81 @@ def analyze_crypto_pair(ticker):
         df = yf.download(ticker, period="1d", interval="1m", progress=False)
         if df.empty or len(df) < 30:
             return {
-                "pair": PAIR_NAMES.get(ticker, ticker), 
-                "status": "No Data", "candle": "-", "rsi": 50, 
-                "signal": "WAITING", "arrow": "⏳", "win_rate": "50%", "sound": False
+                "pair": PAIR_NAMES.get(ticker, ticker), "price": "0.00",
+                "status": "WAIT", "up_pct": 50.0, "down_pct": 50.0,
+                "strength": "ອ່ອນ", "confidence": "50.0%", "score_up": "0", "score_down": "0",
+                "market_conf": "50/100", "diff": "0.00%", "reasons": ["No Data"], "sound": False
             }
 
-        # 1. คำนวณ RSI (14)
+        # 1. คำนวณ RSI & MACD
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
 
-        # 2. คำนวณ MACD (12, 26, 9)
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df['Close'].ewm(span=26, adjust=False).mean()
         df['MACD'] = exp1 - exp2
         df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
+        current_price = float(df['Close'].iloc[-1])
         current_rsi = float(df['RSI'].iloc[-1])
         current_macd = float(df['MACD'].iloc[-1])
         current_signal = float(df['Signal_Line'].iloc[-1])
         
-        # 3. วิเคราะห์แท่งเทียนปัจจุบัน
         latest_open = float(df['Open'].iloc[-1])
         latest_close = float(df['Close'].iloc[-1])
-        
-        if latest_close > latest_open:
-            candle_type = "🟢 เขียว (Bullish)"
-        elif latest_close < latest_open:
-            candle_type = "🔴 แดง (Bearish)"
-        else:
-            candle_type = "⚪ Doji"
 
-        # 4. ระบบเวลา: นับถอยหลัง 30 วินาทีลงมา 0 
+        # คำนวณเปอร์เซັນต์ Up / Down จำลองจาก RSI และ MACD
+        up_pct = round(min(max(float(current_rsi), 10.0), 90.0), 2)
+        down_pct = round(100.0 - up_pct, 2)
+
+        # 2. ระบบเวลา 30 วินาที
         now = datetime.now()
         second = now.second
-        cycle_remain = 30 - (second % 30)
-        
-        # ออกสัญญาณเฉพาะ 5 วินาทีสุดท้าย (25-29 หรือ 55-59)
         is_final_5s = (25 <= second <= 29) or (55 <= second <= 59)
 
-        if not is_final_5s:
-            return {
-                "pair": PAIR_NAMES.get(ticker, ticker),
-                "status": f"⏳ ລໍຖ້າ (ເຫຼືອ {cycle_remain}s)",
-                "candle": candle_type, "rsi": round(current_rsi, 2),
-                "signal": "WAITING", "arrow": "➖", "win_rate": "-", "sound": False
-            }
+        signal_status = "WAIT"
+        strength = "ອ່ອນ"
+        reasons = ["Neutral Candle", "Close = Mid", "Open = Mid"]
+        sound = False
 
-        # --- ระบบประเมินสัญญาณด้วย Indicators (RSI + MACD + Candle) ---
-        score = 50.0
-        signal_type = "WAIT"
-
-        # เงื่อนไขแทงขึ้น (BUY) -> ลูกศรชี้ขึ้น ⬆️
         if current_rsi <= 38 and current_macd > current_signal and latest_close > latest_open:
-            score = 88.5
-            signal_type = "BUY"
-        # เงื่อนไขแทงลง (SELL) -> ลูกศรชี้ลง ⬇️
+            signal_status = "BUY"
+            strength = "ແຂງແກ່ນ"
+            reasons = ["Bullish Candle", "Strong Bullish Body", "RSI Oversold Bounce"]
+            if is_final_5s:
+                sound = True
         elif current_rsi >= 62 and current_macd < current_signal and latest_close < latest_open:
-            score = 87.0
-            signal_type = "SELL"
-        else:
-            score = 55.0
-            signal_type = "WAIT"
-
-        if score >= 80.0:
-            if signal_type == "BUY":
-                return {
-                    "pair": PAIR_NAMES.get(ticker, ticker),
-                    "status": "⚡ 5 ວິສຸດທ້າຍ (ສັນຍານມາແລ້ວ)",
-                    "candle": candle_type, "rsi": round(current_rsi, 2),
-                    "signal": "แทงขึ้น (CALL)", "arrow": "⬆️🟢", "win_rate": f"{score}%", "sound": True
-                }
-            elif signal_type == "SELL":
-                return {
-                    "pair": PAIR_NAMES.get(ticker, ticker),
-                    "status": "⚡ 5 ວິສຸດທ້າຍ (ສັນຍານມາແລ້ວ)",
-                    "candle": candle_type, "rsi": round(current_rsi, 2),
-                    "signal": "แทงลง (PUT)", "arrow": "⬇️🔴", "win_rate": f"{score}%", "sound": True
-                }
+            signal_status = "SELL"
+            strength = "ແຂງແກ່ນ"
+            reasons = ["Bearish Candle", "Strong Bearish Body", "RSI Overbought Drop"]
+            if is_final_5s:
+                sound = True
 
         return {
             "pair": PAIR_NAMES.get(ticker, ticker),
-            "status": "⚡ 5 ວິສຸດທ້າຍ",
-            "candle": candle_type, "rsi": round(current_rsi, 2),
-            "signal": "⏸️ ບໍ່ຮອດ 80%", "arrow": "⏳", "win_rate": f"{score}%", "sound": False
+            "price": f"{current_price:,.4f}" if current_price < 1 else f"{current_price:,.2f}",
+            "status": signal_status,
+            "up_pct": up_pct,
+            "down_pct": down_pct,
+            "strength": strength,
+            "confidence": f"{up_pct}%" if signal_status == "BUY" else f"{down_pct}%",
+            "score_up": f"{round(current_rsi, 2)}",
+            "score_down": f"{round(100 - current_rsi, 2)}",
+            "market_conf": f"{int(up_pct)}/100",
+            "diff": f"{round(abs(current_macd), 2)}%",
+            "reasons": reasons,
+            "sound": sound
         }
 
     except Exception as e:
         return {
-            "pair": PAIR_NAMES.get(ticker, ticker),
-            "status": "Error", "candle": "-", "rsi": 0,
-            "signal": "ERROR", "arrow": "❌", "win_rate": "-", "sound": False
+            "pair": PAIR_NAMES.get(ticker, ticker), "price": "0.00",
+            "status": "WAIT", "up_pct": 50.0, "down_pct": 50.0,
+            "strength": "Error", "confidence": "0%", "score_up": "0", "score_down": "0",
+            "market_conf": "0/100", "diff": "0%", "reasons": ["Error fetching data"], "sound": False
         }
 
 @app.get("/", response_class=HTMLResponse)
@@ -130,42 +112,107 @@ def dashboard(request: Request):
     current_time_str = datetime.now().strftime('%H:%M:%S')
     any_sound = any(r['sound'] for r in results)
 
-    rows_html = ""
+    cards_html = ""
     for r in results:
-        sig_color = "#8b949e"
-        if "CALL" in r['signal']:
-            sig_color = "#3fb950"
-        elif "PUT" in r['signal']:
-            sig_color = "#f85149"
+        status_bg = "#21262d"
+        status_color = "#8b949e"
+        if r['status'] == "BUY":
+            status_bg = "#238636"
+            status_color = "#ffffff"
+        elif r['status'] == "SELL":
+            status_bg = "#da3633"
+            status_color = "#ffffff"
+
+        reasons_html = "".join([f'<span class="reason-tag">{rs}</span>' for rs in r['reasons']])
+
+        cards_html += f"""
+        <div class="crypto-card">
+            <div class="card-header">
+                <span class="pair-title">🟡 {r['pair']}</span>
+                <span class="status-badge" style="background-color: {status_bg}; color: {status_color};">{r['status']}</span>
+            </div>
             
-        rows_html += f"""
-            <tr>
-                <td><b style="color: #f0f6fc;">🟡 {r['pair']}</b></td>
-                <td>{r['status']}</td>
-                <td>{r['candle']}</td>
-                <td>{r['rsi']}</td>
-                <td style="color: {sig_color}; font-weight: bold; font-size: 16px;">{r['signal']}</td>
-                <td style="font-size: 24px;">{r['arrow']}</td>
-                <td><b style="color: #58a6ff;">{r['win_rate']}</b></td>
-            </tr>
+            <div class="price-section">
+                <div class="price-label">ລາຄາປັດຈຸບັນ</div>
+                <div class="price-value">{r['price']}</div>
+            </div>
+
+            <div class="pct-bar-container">
+                <div class="pct-labels">
+                    <span style="color: #3fb950;">UP {r['up_pct']}%</span>
+                    <span style="color: #f85149;">DOWN {r['down_pct']}%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill-up" style="width: {r['up_pct']}%;"></div>
+                </div>
+            </div>
+
+            <div class="metrics-grid">
+                <div class="metric-box">
+                    <div class="metric-title">ຄວາມແຂງແກ່ນ</div>
+                    <div class="metric-val" style="color: {'#3fb950' if r['strength']=='ແຂງແກ່ນ' else '#8b949e'};">{r['strength']}</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-title">ຄວາມໝັ້ນໃຈ</div>
+                    <div class="metric-val">{r['confidence']}</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-title">ຄະແນນຂາຂຶ້ນ</div>
+                    <div class="metric-val">{r['score_up']}</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-title">ຄະແນນຂາລົງ</div>
+                    <div class="metric-val">{r['score_down']}</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-title">ຄວາມເຊື່ອໝັ້ນຕະຫຼາດ</div>
+                    <div class="metric-val">{r['market_conf']}</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-title">ສ່ວນຕ່າງທິດທາງ</div>
+                    <div class="metric-val">{r['diff']}</div>
+                </div>
+            </div>
+
+            <div class="reasons-section">
+                <div class="reasons-title">ເຫດຜົນການວິເຄາະ</div>
+                <div class="reasons-flex">
+                    {reasons_html}
+                </div>
+            </div>
+        </div>
         """
 
     html_content = f"""<!DOCTYPE html>
 <html lang="lo">
 <head>
     <meta charset="UTF-8">
-    <title>XR Trade - Pro Multi-Indicator Signal</title>
+    <title>XR Trade - Pro Card Dashboard</title>
     <meta http-equiv="refresh" content="3">
     <style>
-        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0d1117; color: #c9d1d9; text-align: center; padding: 20px; }}
-        h1 {{ color: #58a6ff; }}
-        .time-box {{ font-size: 18px; margin-bottom: 20px; background: #161b22; display: inline-block; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; color: #f0883e; }}
-        table {{ width: 90%; margin: 0 auto; border-collapse: collapse; background: #161b22; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }}
-        th, td {{ padding: 14px; border-bottom: 1px solid #30363d; text-align: center; font-size: 15px; }}
-        th {{ background-color: #21262d; color: #8b949e; text-transform: uppercase; font-size: 14px; }}
-        tr:hover {{ background-color: #1f242c; }}
-        .audio-btn {{ background: #238636; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 6px; cursor: pointer; margin-bottom: 15px; font-weight: bold; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }}
+        .top-bar {{ display: flex; justify-content: space-between; align-items: center; background: #161b22; padding: 15px 25px; border-radius: 10px; border: 1px solid #30363d; margin-bottom: 25px; }}
+        .audio-btn {{ background: #238636; color: white; border: none; padding: 10px 20px; font-size: 15px; border-radius: 6px; cursor: pointer; font-weight: bold; }}
         .audio-btn:hover {{ background: #2ea043; }}
+        .grid-container {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }}
+        .crypto-card {{ background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 18px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }}
+        .card-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }}
+        .pair-title {{ font-size: 18px; font-weight: bold; color: #f0f6fc; }}
+        .status-badge {{ padding: 4px 12px; border-radius: 6px; font-size: 13px; font-weight: bold; }}
+        .price-section {{ background: #0d1117; padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #21262d; }}
+        .price-label {{ font-size: 12px; color: #8b949e; }}
+        .price-value {{ font-size: 20px; font-weight: bold; color: #58a6ff; }}
+        .pct-bar-container {{ margin-bottom: 15px; }}
+        .pct-labels {{ display: flex; justify-content: space-between; font-size: 12px; font-weight: bold; margin-bottom: 5px; }}
+        .progress-bar {{ background: #f85149; height: 6px; border-radius: 3px; overflow: hidden; }}
+        .progress-fill-up {{ background: #3fb950; height: 100%; }}
+        .metrics-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px; }}
+        .metric-box {{ background: #0d1117; padding: 8px; border-radius: 6px; border: 1px solid #21262d; }}
+        .metric-title {{ font-size: 11px; color: #8b949e; }}
+        .metric-val {{ font-size: 13px; font-weight: bold; color: #f0f6fc; margin-top: 2px; }}
+        .reasons-title {{ font-size: 12px; color: #8b949e; margin-bottom: 6px; }}
+        .reasons-flex {{ display: flex; flex-wrap: wrap; gap: 5px; }}
+        .reason-tag {{ background: #21262d; color: #c9d1d9; font-size: 11px; padding: 4px 8px; border-radius: 4px; border: 1px solid #30363d; }}
     </style>
     <script>
         function playSound() {{
@@ -197,23 +244,19 @@ def dashboard(request: Request):
     </script>
 </head>
 <body>
-    <h1>🚀 XR Trade - Live Crypto Signals (30s Cycle)</h1>
-    <div>
-        <button class="audio-btn" onclick="enableSound()">🔊 ເປີດສຽງແຈ້ງເຕືອນ (ຄລິກທີ່ນີ້ກ່ອນ)</button>
+    <div class="top-bar">
+        <div>
+            <h2 style="margin: 0; color: #58a6ff;">🚀 XR Trade - Pro Signal Dashboard</h2>
+            <div style="font-size: 13px; color: #8b949e; margin-top: 3px;">⏰ ເวລາລະບົບ: {current_time_str} | ອັບເດດແບບ Real-time</div>
+        </div>
+        <div>
+            <button class="audio-btn" onclick="enableSound()">🔊 ເປີດສຽງແຈ້ງເຕືອນ</button>
+        </div>
     </div>
-    <div class="time-box">⏰ ເວລາລະບົບ: {current_time_str} | ຮອບວຽນ 30 ວິ ລົງມາ 0 ວິ | ສະແດງສັນຍານໃນ 5 ວິສຸດທ້າຍ</div>
-    <table>
-        <tr>
-            <th>ຄູ່ເງິນ Crypto</th>
-            <th>ສະຖານະເວລາ</th>
-            <th>ແທ່ງທຽນປັດຈຸບັນ</th>
-            <th>RSI</th>
-            <th>ສັນຍານຊື້-ຂາຍ</th>
-            <th>ທິດທາງ (ลูกศร)</th>
-            <th>Win Rate</th>
-        </tr>
-        {rows_html}
-    </table>
+
+    <div class="grid-container">
+        {cards_html}
+    </div>
 </body>
 </html>
 """
